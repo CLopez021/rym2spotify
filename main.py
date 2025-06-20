@@ -41,7 +41,6 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
     This function runs in the background.
     It scrapes all pages of a RYM list and, if requested, all album pages sequentially.
     """
-    print(f"Background task {task_id} started for URL: {rym_url} (Scrape Albums: {scrape_albums})")
     scraper = None
     try:
         tasks[task_id] = {'status': 'processing', 'message': 'Initializing browser...'}
@@ -58,12 +57,10 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
         # This will be the first page loaded, triggering the CAPTCHA wait if needed.
         first_page_url = f"{base_url}/1/"
         tasks[task_id]['message'] = 'Scraping list page 1... (check browser for CAPTCHA)'
-        print(f"Scraping list page 1... (check browser for CAPTCHA)")
         list_html = scraper.get_page(first_page_url)
         page_items = parse_list_page_for_items(list_html)
 
         if not page_items:
-            print(f"No items found on the first page.")
             tasks[task_id] = {'status': 'success', 'data': [], 'message': 'Scraping complete. No items found on the first page.'}
             return
             
@@ -71,7 +68,6 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
         page_number += 1
 
         while True:
-            print(f"Scraping list page {page_number}fsdfsfdsfsdfsdf..")
             tasks[task_id]['message'] = f'Scraping list page {page_number}...'
             paginated_url = f"{base_url}/{page_number}/"
             
@@ -102,22 +98,18 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
                     spotify_link = parse_album_page_for_spotify_link(album_html)
                     final_list.append(spotify_link or f"{item['artist']} - {item['title']}")
                 except Exception as e:
-                    print(f"Failed to process album {item['title']}: {e}")
                     final_list.append(f"{item['artist']} - {item['title']}") # Fallback
             else:
                 tasks[task_id]['message'] = f"{progress} Adding: {item['title']}"
                 final_list.append(f"{item['artist']} - {item['title']}")
         
         tasks[task_id] = {'status': 'success', 'data': final_list, 'message': 'Processing complete!'}
-        print(f"Background task {task_id} finished successfully.")
 
     except Exception as e:
-        print(f"Background task {task_id} failed: {e}")
         tasks[task_id] = {'status': 'failure', 'message': str(e)}
     finally:
         if scraper:
             scraper.close()
-            print(f"Scraper for task {task_id} has been closed.")
 
 # --- API Endpoints ---
 @app.post("/start-scraping/", status_code=202)

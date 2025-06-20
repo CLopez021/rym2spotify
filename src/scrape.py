@@ -10,6 +10,8 @@ class Scraper:
     """
     A class to manage a persistent undetected_chromedriver instance.
     """
+    CLOUDFLARE_CHALLENGE_TEXT = "challenges.cloudflare.com"
+
     def __init__(self):
         """
         Initializes and launches the Chrome driver.
@@ -27,35 +29,30 @@ class Scraper:
             self.driver.get("about:blank") # Warm it up
 
         except Exception as e:
-            print(f"Failed to initialize the scraper: {e}")
             self.close()
             raise
 
     def get_page(self, url: str) -> str:
         """
         Navigates to the given URL and returns the page source.
-        Includes a one-time CAPTCHA solving window on the first call.
+        If a Cloudflare challenge is detected, it waits for manual intervention.
         """
         if not self.driver:
             raise Exception("Driver is not initialized.")
 
         try:
-            print(f"SCRAPER LOG: Attempting to navigate to: {url}")
+            time.sleep(2) # To avoid getting banned smh
             self.driver.get(url)
-            print(f"SCRAPER LOG: Actually landed on: {self.driver.current_url}")
+            page_source = self.driver.page_source
 
-            # A Cloudflare challenge will add parameters to the URL.
-            if "__cf_chl_rt_tk" in self.driver.current_url:
-                 print("CAPTCHA page detected. You have 30 seconds to solve it...")
+            if self.CLOUDFLARE_CHALLENGE_TEXT in page_source:
                  time.sleep(30)
-                 print("Time's up. Re-attempting original navigation...")
                  self.driver.get(url)
-                 print(f"SCRAPER LOG: After CAPTCHA, landed on: {self.driver.current_url}")
+                 page_source = self.driver.page_source
 
-            return self.driver.page_source
+            return page_source
         
         except (TimeoutException, WebDriverException) as e:
-            print(f"An error occurred while getting page {url}: {e}")
             raise
 
     def close(self):
