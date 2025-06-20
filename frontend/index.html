@@ -42,7 +42,7 @@
             <div class="link-input-container">
                 <input type="url" id="rymUrl" placeholder="https://rateyourmusic.com/list/..." class="link-input">
             </div>
-            <button class="process-btn" id="processBtn" disabled>
+            <button class="process-btn" id="processBtn" type="button" disabled>
                 SUBMIT
             </button>
         </section>
@@ -90,11 +90,22 @@
                 this.resultsSummary = document.getElementById('resultsSummary');
                 this.copyBtn = document.getElementById('copyBtn');
                 this.loading = document.getElementById('loading');
+                this.loadingText = document.querySelector('.loading-text');
+                this.pollingInterval = null;
             }
 
             bindEvents() {
                 this.urlInput.addEventListener('input', this.handleUrlInputChange.bind(this));
-                this.processBtn.addEventListener('click', this.processUrl.bind(this));
+                // Prevent page reload on Enter and trigger processing
+                this.urlInput.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (!this.processBtn.disabled) {
+                            this.processUrl(event);
+                        }
+                    }
+                });
+                this.processBtn.addEventListener('click', (event) => this.processUrl(event));
                 this.copyBtn.addEventListener('click', this.copyResults.bind(this));
             }
 
@@ -112,7 +123,8 @@
                 }
             }
 
-            async processUrl() {
+            async processUrl(event) {
+                event.preventDefault(); // Stop the browser's default refresh action
                 const url = this.urlInput.value.trim();
                 if (!this.isValidRymUrl(url)) return;
 
@@ -120,28 +132,59 @@
                 this.hideResults();
 
                 try {
-                    const response = await fetch('http://127.0.0.1:8000/process-rym-list/', {
+                    // Step 1: Start the background task
+                    const startResponse = await fetch('http://127.0.0.1:8000/start-scraping/', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ url: url }),
                     });
 
-                    const result = await response.json();
-                    this.hideLoading();
-
-                    if (response.ok && result.success) {
-                        this.displayResults(result.data);
-                    } else {
-                        const errorMessage = result.detail || 'An unknown error occurred.';
-                        this.showError(errorMessage);
+                    if (!startResponse.ok) {
+                        const errorResult = await startResponse.json();
+                        throw new Error(errorResult.detail || 'Failed to start scraping task.');
                     }
+
+                    const startResult = await startResponse.json();
+                    const taskId = startResult.task_id;
+
+                    // Step 2: Poll for the result
+                    this.pollForResults(taskId);
+
                 } catch (error) {
                     this.hideLoading();
                     console.error('Failed to connect to the backend:', error);
-                    this.showError('Could not connect to the processing server. Is it running?');
+                    this.showError(error.message || 'Could not connect to the processing server. Is it running?');
                 }
+            }
+
+            pollForResults(taskId) {
+                this.pollingInterval = setInterval(async () => {
+                    try {
+                        const statusResponse = await fetch(`http://127.0.0.1:8000/task-status/${taskId}`);
+                        if (!statusResponse.ok) return; // Silently ignore poll fails, wait for next one
+
+                        const result = await statusResponse.json();
+
+                        this.updateLoadingText(result.message);
+
+                        if (result.status === 'success') {
+                            clearInterval(this.pollingInterval);
+                            this.hideLoading();
+                            this.displayResults(result.data);
+                        } else if (result.status === 'failure') {
+                            clearInterval(this.pollingInterval);
+                            this.hideLoading();
+                            this.showError(result.message || 'The scraping task failed.');
+                        }
+                        // If status is 'pending' or 'processing', do nothing and wait for the next poll.
+
+                    } catch (error) {
+                        // This will catch network errors during polling
+                        clearInterval(this.pollingInterval);
+                        this.hideLoading();
+                        this.showError('Connection to server lost during processing.');
+                    }
+                }, 3000); // Poll every 3 seconds
             }
 
             displayResults(results) {
@@ -204,7 +247,16 @@
             }
 
             hideLoading() {
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                }
                 this.loading.style.display = 'none';
+            }
+
+            updateLoadingText(message) {
+                if (this.loadingText && message) {
+                    this.loadingText.textContent = message;
+                }
             }
 
             showError(message) {

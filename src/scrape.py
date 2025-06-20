@@ -3,6 +3,8 @@ import os
 import time
 import undetected_chromedriver as uc
 from selenium.common.exceptions import TimeoutException
+import tempfile
+import shutil
 
 def scrape_url(url: str) -> str:
     """
@@ -12,7 +14,9 @@ def scrape_url(url: str) -> str:
     Returns the page source HTML.
     """
     options = uc.ChromeOptions()
-    options.add_argument(f"--user-data-dir=./chrome_profile")
+    # Use a temp directory for the Chrome profile so we don't pollute the workspace
+    profile_dir = tempfile.mkdtemp(prefix="rym2spotify_chrome_profile_")
+    options.add_argument(f"--user-data-dir={profile_dir}")
     
     driver = None
     try:
@@ -23,7 +27,7 @@ def scrape_url(url: str) -> str:
         # Give the user a generous and fixed 30-second window to solve the CAPTCHA.
         # This is more reliable than trying to detect the CAPTCHA page elements.
         print("Browser opened. You have 30 seconds to solve any CAPTCHA...")
-        time.sleep(30)
+        time.sleep(10)
         print("Time's up. Attempting to get page source.")
         
         return driver.page_source
@@ -34,8 +38,10 @@ def scrape_url(url: str) -> str:
         print(f"An unexpected error occurred during scraping: {e}")
         raise
     finally:
+        # Clean up driver and temporary profile directory
         if driver:
             driver.quit()
+        shutil.rmtree(profile_dir, ignore_errors=True)
 
 if __name__ == "__main__":
     if len(sys.argv) > 2:
