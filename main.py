@@ -7,7 +7,7 @@ import re
 import time
 
 # Import your refactored, modular functions
-from src.scrape import scrape_url
+from src.scrape import Scraper
 from src.parse_html import parse_list_page_for_items, parse_album_page_for_spotify_link
 
 app = FastAPI(
@@ -42,7 +42,11 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
     It scrapes all pages of a RYM list and, if requested, all album pages sequentially.
     """
     print(f"Background task {task_id} started for URL: {rym_url} (Scrape Albums: {scrape_albums})")
+    scraper = None
     try:
+        tasks[task_id] = {'status': 'processing', 'message': 'Initializing browser...'}
+        scraper = Scraper()
+        
         base_url_match = re.match(r"(https://rateyourmusic\.com/list/[^/]+/[^/]+)", rym_url)
         if not base_url_match:
             raise ValueError("Invalid RYM list URL format.")
@@ -50,25 +54,42 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
 
         all_items = []
         page_number = 1
+        
+        # This will be the first page loaded, triggering the CAPTCHA wait if needed.
+        first_page_url = f"{base_url}/1/"
+        tasks[task_id]['message'] = 'Scraping list page 1... (check browser for CAPTCHA)'
+        print(f"Scraping list page 1... (check browser for CAPTCHA)")
+        list_html = scraper.get_page(first_page_url)
+        page_items = parse_list_page_for_items(list_html)
+
+        if not page_items:
+            print(f"No items found on the first page.")
+            tasks[task_id] = {'status': 'success', 'data': [], 'message': 'Scraping complete. No items found on the first page.'}
+            return
+            
+        all_items.extend(page_items)
+        page_number += 1
+
         while True:
-            tasks[task_id] = {'status': 'processing', 'message': f'Scraping list page {page_number}...'}
+            print(f"Scraping list page {page_number}fsdfsfdsfsdfsdf..")
+            tasks[task_id]['message'] = f'Scraping list page {page_number}...'
             paginated_url = f"{base_url}/{page_number}/"
             
-            list_html = scrape_url(paginated_url)
-            page_items = parse_list_page_for_items(list_html)
-
+            list_html = scraper.get_page(paginated_url)
+            if list_html is None:
+                break
+            try:
+                page_items = parse_list_page_for_items(list_html)
+            except Exception as e:
+                break
             if not page_items:
                 break
             
             all_items.extend(page_items)
             page_number += 1
-            time.sleep(1) # Be polite to the server
+            time.sleep(1) # Be polite
 
-        if not all_items:
-            tasks[task_id] = {'status': 'success', 'data': [], 'message': 'Scraping complete. No items found.'}
-            return
-
-        tasks[task_id]['message'] = f'Found {len(all_items)} items across {page_number - 1} pages. Processing each one...'
+        tasks[task_id]['message'] = f'Found {len(all_items)} items. Processing...'
         
         final_list = []
         for i, item in enumerate(all_items):
@@ -77,7 +98,7 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
                 tasks[task_id]['message'] = f"{progress} Scraping album: {item['title']}"
                 try:
                     time.sleep(1) # Be polite
-                    album_html = scrape_url(item['title_link'])
+                    album_html = scraper.get_page(item['title_link'])
                     spotify_link = parse_album_page_for_spotify_link(album_html)
                     final_list.append(spotify_link or f"{item['artist']} - {item['title']}")
                 except Exception as e:
@@ -93,6 +114,10 @@ def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
     except Exception as e:
         print(f"Background task {task_id} failed: {e}")
         tasks[task_id] = {'status': 'failure', 'message': str(e)}
+    finally:
+        if scraper:
+            scraper.close()
+            print(f"Scraper for task {task_id} has been closed.")
 
 # --- API Endpoints ---
 @app.post("/start-scraping/", status_code=202)

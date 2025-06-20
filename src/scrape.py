@@ -2,52 +2,69 @@ import sys
 import os
 import time
 import undetected_chromedriver as uc
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 import tempfile
 import shutil
 
-def scrape_url(url: str) -> str:
+class Scraper:
     """
-    Scrapes the given URL using undetected_chromedriver with a persistent profile.
-    This version launches a visible browser and waits a fixed time to allow
-    for manual CAPTCHA solving.
-    Returns the page source HTML.
+    A class to manage a persistent undetected_chromedriver instance.
     """
-    options = uc.ChromeOptions()
-    # Use a temp directory for the Chrome profile so we don't pollute the workspace
-    profile_dir = tempfile.mkdtemp(prefix="rym2spotify_chrome_profile_")
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    
-    driver = None
-    try:
-        # Using suppress_welcome_screen=True and other flags for stability
-        driver = uc.Chrome(options=options, suppress_welcome_screen=True, use_subprocess=False)
-        driver.get(url)
-
-        # Give the user a generous and fixed 30-second window to solve the CAPTCHA.
-        # This is more reliable than trying to detect the CAPTCHA page elements.
-        print("Browser opened. You have 30 seconds to solve any CAPTCHA...")
-        time.sleep(10)
-        print("Time's up. Attempting to get page source.")
+    def __init__(self):
+        """
+        Initializes and launches the Chrome driver.
+        """
+        self.driver = None
+        self.profile_dir = tempfile.mkdtemp(prefix="rym2spotify_chrome_profile_")
         
-        return driver.page_source
-    except TimeoutException:
-        print("The page timed out after the wait. The CAPTCHA may not have been solved in time.")
-        raise
-    except Exception as e:
-        print(f"An unexpected error occurred during scraping: {e}")
-        raise
-    finally:
-        # Clean up driver and temporary profile directory
-        if driver:
-            driver.quit()
-        shutil.rmtree(profile_dir, ignore_errors=True)
+        try:
+            options = uc.ChromeOptions()
+            options.add_argument(f"--user-data-dir={self.profile_dir}")
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
 
-if __name__ == "__main__":
-    if len(sys.argv) > 2:
-        url_to_scrape = sys.argv[1]
-        html_output_path = sys.argv[2]
-        scrape_single_url(url_to_scrape, html_output_path)
-    else:
-        print("Usage: python scrape.py <URL> <output_path>")
-        sys.exit(1) 
+            self.driver = uc.Chrome(options=options, use_subprocess=True)
+            self.driver.get("about:blank") # Warm it up
+
+        except Exception as e:
+            print(f"Failed to initialize the scraper: {e}")
+            self.close()
+            raise
+
+    def get_page(self, url: str) -> str:
+        """
+        Navigates to the given URL and returns the page source.
+        Includes a one-time CAPTCHA solving window on the first call.
+        """
+        if not self.driver:
+            raise Exception("Driver is not initialized.")
+
+        try:
+            print(f"SCRAPER LOG: Attempting to navigate to: {url}")
+            self.driver.get(url)
+            print(f"SCRAPER LOG: Actually landed on: {self.driver.current_url}")
+
+            # A Cloudflare challenge will add parameters to the URL.
+            if "__cf_chl_rt_tk" in self.driver.current_url:
+                 print("CAPTCHA page detected. You have 30 seconds to solve it...")
+                 time.sleep(30)
+                 print("Time's up. Re-attempting original navigation...")
+                 self.driver.get(url)
+                 print(f"SCRAPER LOG: After CAPTCHA, landed on: {self.driver.current_url}")
+
+            return self.driver.page_source
+        
+        except (TimeoutException, WebDriverException) as e:
+            print(f"An error occurred while getting page {url}: {e}")
+            raise
+
+    def close(self):
+        """
+        Quits the driver and cleans up the temporary profile directory.
+        """
+        if self.driver:
+            try:
+                self.driver.quit()
+            except WebDriverException:
+                pass
+        shutil.rmtree(self.profile_dir, ignore_errors=True)
