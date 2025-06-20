@@ -42,6 +42,13 @@
             <div class="link-input-container">
                 <input type="url" id="rymUrl" placeholder="https://rateyourmusic.com/list/..." class="link-input">
             </div>
+            <div class="options-container">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="scrapeAlbums" name="scrapeAlbums">
+                    Include albums
+                </label>
+                <div class="info-hint">including albums= more captchas, more time, more annoying</div>
+            </div>
             <button class="process-btn" id="processBtn" type="button" disabled>
                 SUBMIT
             </button>
@@ -84,6 +91,7 @@
 
             initializeElements() {
                 this.urlInput = document.getElementById('rymUrl');
+                this.scrapeAlbumsCheckbox = document.getElementById('scrapeAlbums');
                 this.processBtn = document.getElementById('processBtn');
                 this.resultsSection = document.getElementById('resultsSection');
                 this.resultsContent = document.getElementById('resultsContent');
@@ -115,18 +123,16 @@
             }
 
             isValidRymUrl(url) {
-                try {
-                    const parsedUrl = new URL(url);
-                    return parsedUrl.hostname === 'rateyourmusic.com';
-                } catch (e) {
-                    return false;
-                }
+                const rymListPattern = /^https:\/\/rateyourmusic\.com\/list\/[^\/]+\/[^\/]+/;
+                return rymListPattern.test(url);
             }
 
             async processUrl(event) {
                 event.preventDefault(); // Stop the browser's default refresh action
                 const url = this.urlInput.value.trim();
                 if (!this.isValidRymUrl(url)) return;
+                
+                const scrapeAlbums = this.scrapeAlbumsCheckbox.checked;
 
                 this.showLoading();
                 this.hideResults();
@@ -136,7 +142,7 @@
                     const startResponse = await fetch('http://127.0.0.1:8000/start-scraping/', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: url }),
+                        body: JSON.stringify({ url: url, scrape_albums: scrapeAlbums }),
                     });
 
                     if (!startResponse.ok) {
@@ -195,7 +201,7 @@
                     return;
                 }
 
-                const formattedResults = results.join('\\n');
+                const formattedResults = results.join('\n');
                 this.resultsContent.textContent = formattedResults;
                 
                 const summaryText = `Found and processed ${results.length} items`;

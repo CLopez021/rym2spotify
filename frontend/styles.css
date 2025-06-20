@@ -124,12 +124,40 @@ body {
 
 /* Input Section */
 .input-section {
-    border-top: 1px solid var(--c-subtle);
-    padding-top: 24px;
+    margin-bottom: 40px;
+}
+
+.options-container {
+    margin-top: 15px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+}
+
+.checkbox-label input[type="checkbox"] {
+    margin-right: 8px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.info-hint {
+    font-size: 12px;
+    color: #666;
+    font-style: italic;
 }
 
 .link-input-container {
-    margin-bottom: 24px;
+    position: relative;
+    margin-bottom: 20px;
 }
 
 .link-input {

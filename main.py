@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 import uuid
 import asyncio
+import re
+import time
 
 # Import your refactored, modular functions
 from src.scrape import scrape_url
@@ -28,58 +30,69 @@ app.add_middleware(
 # Define the request body for the API endpoint
 class RymUrlRequest(BaseModel):
     url: HttpUrl
+    scrape_albums: bool = False # Add new field with a default
 
 # --- In-memory storage for tasks ---
 # In a production app, you'd use Redis or a database for this.
 tasks = {}
 
-def run_scraping_task(task_id: str, rym_url: str):
+def run_scraping_task(task_id: str, rym_url: str, scrape_albums: bool):
     """
     This function runs in the background.
-    It scrapes the list and all album pages sequentially.
+    It scrapes all pages of a RYM list and, if requested, all album pages sequentially.
     """
-    print(f"Background task {task_id} started for URL: {rym_url}")
-    tasks[task_id] = {'status': 'processing', 'data': None, 'message': 'Scraping main list page...'}
-
+    print(f"Background task {task_id} started for URL: {rym_url} (Scrape Albums: {scrape_albums})")
     try:
-        # 1. Scrape the main list page
-        list_html = scrape_url(rym_url)
-        items = parse_list_page_for_items(list_html)
-        if not items:
-            tasks[task_id] = {'status': 'failure', 'data': None, 'message': 'No items found on the list page.'}
+        base_url_match = re.match(r"(https://rateyourmusic\.com/list/[^/]+/[^/]+)", rym_url)
+        if not base_url_match:
+            raise ValueError("Invalid RYM list URL format.")
+        base_url = base_url_match.group(1)
+
+        all_items = []
+        page_number = 1
+        while True:
+            tasks[task_id] = {'status': 'processing', 'message': f'Scraping list page {page_number}...'}
+            paginated_url = f"{base_url}/{page_number}/"
+            
+            list_html = scrape_url(paginated_url)
+            page_items = parse_list_page_for_items(list_html)
+
+            if not page_items:
+                break
+            
+            all_items.extend(page_items)
+            page_number += 1
+            time.sleep(1) # Be polite to the server
+
+        if not all_items:
+            tasks[task_id] = {'status': 'success', 'data': [], 'message': 'Scraping complete. No items found.'}
             return
-        
-        tasks[task_id]['message'] = f'Found {len(items)} items. Processing each one...'
+
+        tasks[task_id]['message'] = f'Found {len(all_items)} items across {page_number - 1} pages. Processing each one...'
         
         final_list = []
-        total_items = len(items)
-        
-        # 2. Process each item SEQUENTIALLY to avoid being flagged
-        for i, item in enumerate(items):
-            current_progress = f"({i+1}/{total_items})"
-            if item.get('type') == 'album' and item.get('title_link'):
-                tasks[task_id]['message'] = f"{current_progress} Scraping album: {item['title']}"
+        for i, item in enumerate(all_items):
+            progress = f"({i+1}/{len(all_items)})"
+            if scrape_albums and item.get('type') == 'album' and item.get('title_link'):
+                tasks[task_id]['message'] = f"{progress} Scraping album: {item['title']}"
                 try:
+                    time.sleep(1) # Be polite
                     album_html = scrape_url(item['title_link'])
                     spotify_link = parse_album_page_for_spotify_link(album_html)
-                    if spotify_link:
-                        final_list.append(spotify_link)
-                    else:
-                        final_list.append(f"{item['artist']} - {item['title']}")
+                    final_list.append(spotify_link or f"{item['artist']} - {item['title']}")
                 except Exception as e:
                     print(f"Failed to process album {item['title']}: {e}")
                     final_list.append(f"{item['artist']} - {item['title']}") # Fallback
-            elif item.get('type') == 'song':
-                tasks[task_id]['message'] = f"{current_progress} Adding song: {item['title']}"
+            else:
+                tasks[task_id]['message'] = f"{progress} Adding: {item['title']}"
                 final_list.append(f"{item['artist']} - {item['title']}")
         
-        # 3. Mark task as successful
         tasks[task_id] = {'status': 'success', 'data': final_list, 'message': 'Processing complete!'}
         print(f"Background task {task_id} finished successfully.")
 
     except Exception as e:
         print(f"Background task {task_id} failed: {e}")
-        tasks[task_id] = {'status': 'failure', 'data': None, 'message': str(e)}
+        tasks[task_id] = {'status': 'failure', 'message': str(e)}
 
 # --- API Endpoints ---
 @app.post("/start-scraping/", status_code=202)
@@ -91,7 +104,7 @@ async def start_scraping(request: RymUrlRequest, background_tasks: BackgroundTas
     tasks[task_id] = {'status': 'pending', 'data': None, 'message': 'Task received, waiting to start...'}
     
     # Run the long-running job in the background
-    background_tasks.add_task(run_scraping_task, task_id, str(request.url))
+    background_tasks.add_task(run_scraping_task, task_id, str(request.url), request.scrape_albums)
     
     return {"task_id": task_id, "message": "Scraping task started."}
 
