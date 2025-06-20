@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rym2spotify</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header Section -->
+        <header class="header">
+            <h1 class="title">rym2spotify</h1>
+            <div class="subtitle">Extract albums and songs from Rate Your Music lists</div>
+        </header>
+
+        <!-- Instructions Section -->
+        <section class="instructions">
+            <div class="section-label">HOW TO USE</div>
+            <div class="instruction-steps">
+                <div class="step">
+                    <span class="step-number">01</span>
+                    <span class="step-text">Paste a link to your public Rate Your Music list</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">02</span>
+                    <span class="step-text">A browser window may open to solve a CAPTCHA</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">03</span>
+                    <span class="step-text">Copy the output and paste it into <a href="https://www.spotlistr.com/search/textbox" target="_blank">Spotlistr</a></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Input Section -->
+        <section class="input-section">
+            <div class="section-label">RYM LIST URL</div>
+            <div class="link-input-container">
+                <input type="url" id="rymUrl" placeholder="https://rateyourmusic.com/list/..." class="link-input">
+            </div>
+            <button class="process-btn" id="processBtn" disabled>
+                SUBMIT
+            </button>
+        </section>
+
+        <!-- Results Section -->
+        <section class="results-section" id="resultsSection" style="display: none;">
+            <div class="section-header">
+                <div class="section-label">OUTPUT</div>
+                <button class="copy-btn" id="copyBtn">
+                    <svg class="copy-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    COPY
+                </button>
+            </div>
+            <div class="results-container">
+                <pre class="results-content" id="resultsContent"></pre>
+            </div>
+            <div class="results-summary" id="resultsSummary"></div>
+        </section>
+
+        <!-- Loading State -->
+        <div class="loading" id="loading" style="display: none;">
+            <div class="loading-content">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">Processing file...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class RYMConverter {
+            constructor() {
+                this.initializeElements();
+                this.bindEvents();
+                this.results = null;
+            }
+
+            initializeElements() {
+                this.urlInput = document.getElementById('rymUrl');
+                this.processBtn = document.getElementById('processBtn');
+                this.resultsSection = document.getElementById('resultsSection');
+                this.resultsContent = document.getElementById('resultsContent');
+                this.resultsSummary = document.getElementById('resultsSummary');
+                this.copyBtn = document.getElementById('copyBtn');
+                this.loading = document.getElementById('loading');
+            }
+
+            bindEvents() {
+                this.urlInput.addEventListener('input', this.handleUrlInputChange.bind(this));
+                this.processBtn.addEventListener('click', this.processUrl.bind(this));
+                this.copyBtn.addEventListener('click', this.copyResults.bind(this));
+            }
+
+            handleUrlInputChange() {
+                const url = this.urlInput.value.trim();
+                this.processBtn.disabled = !this.isValidRymUrl(url);
+            }
+
+            isValidRymUrl(url) {
+                try {
+                    const parsedUrl = new URL(url);
+                    return parsedUrl.hostname === 'rateyourmusic.com';
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            async processUrl() {
+                const url = this.urlInput.value.trim();
+                if (!this.isValidRymUrl(url)) return;
+
+                this.showLoading();
+                this.hideResults();
+
+                try {
+                    const response = await fetch('http://127.0.0.1:8000/process-rym-list/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ url: url }),
+                    });
+
+                    const result = await response.json();
+                    this.hideLoading();
+
+                    if (response.ok && result.success) {
+                        this.displayResults(result.data);
+                    } else {
+                        const errorMessage = result.detail || 'An unknown error occurred.';
+                        this.showError(errorMessage);
+                    }
+                } catch (error) {
+                    this.hideLoading();
+                    console.error('Failed to connect to the backend:', error);
+                    this.showError('Could not connect to the processing server. Is it running?');
+                }
+            }
+
+            displayResults(results) {
+                this.results = results;
+                
+                if (results.length === 0) {
+                    this.showError('No items found or processed from the provided URL.');
+                    return;
+                }
+
+                const formattedResults = results.join('\\n');
+                this.resultsContent.textContent = formattedResults;
+                
+                const summaryText = `Found and processed ${results.length} items`;
+                this.resultsSummary.textContent = summaryText;
+                this.showResults();
+            }
+
+            async copyResults() {
+                if (!this.resultsContent.textContent) return;
+
+                try {
+                    await navigator.clipboard.writeText(this.resultsContent.textContent);
+                    
+                    const originalText = this.copyBtn.lastChild;
+                    const originalContent = originalText.textContent;
+                    originalText.textContent = 'COPIED!';
+                    
+                    setTimeout(() => {
+                        originalText.textContent = originalContent;
+                    }, 1500);
+                } catch (error) {
+                    console.error('Failed to copy to clipboard:', error);
+                    this.selectResultsText();
+                }
+            }
+
+            selectResultsText() {
+                const range = document.createRange();
+                range.selectNodeContents(this.resultsContent);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+
+            showResults() {
+                this.resultsSection.style.display = 'block';
+                this.resultsSection.classList.remove('error');
+                setTimeout(() => {
+                    this.resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
+            }
+
+            hideResults() {
+                this.resultsSection.style.display = 'none';
+            }
+
+            showLoading() {
+                this.loading.style.display = 'flex';
+            }
+
+            hideLoading() {
+                this.loading.style.display = 'none';
+            }
+
+            showError(message) {
+                this.resultsContent.textContent = `Error: ${message}`;
+                this.resultsSummary.textContent = 'Processing failed';
+                this.showResults();
+                this.resultsSection.classList.add('error');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            new RYMConverter();
+        });
+    </script>
+</body>
+</html> 
